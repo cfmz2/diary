@@ -15,15 +15,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
+
+      - name: Install Android SDK packages
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "SDK=$SDK"
+          ls "$SDK"
+          SDKM=$(find "$SDK" -path "*cmdline-tools*" -name sdkmanager | head -n 1)
+          echo "sdkmanager=$SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon
