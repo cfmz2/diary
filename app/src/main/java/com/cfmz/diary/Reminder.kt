@@ -45,7 +45,7 @@ object Reminder {
         val style = NotificationCompat.InboxStyle()
         list.take(6).forEach { style.addLine("${it.subject}: ${it.text}") }
         val n = NotificationCompat.Builder(c, CH)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("Невыполненное ДЗ: ${list.size}")
             .setContentText(list.first().let { "${it.subject}: ${it.text}" })
             .setStyle(style).setContentIntent(open).setAutoCancel(true)
@@ -57,6 +57,7 @@ object Reminder {
 class ReminderWorker(c: Context, p: WorkerParameters) : Worker(c, p) {
     override fun doWork(): Result {
         HwStore.init(applicationContext)
+        if (!HwStore.remindOn) return Result.success()
         val now = LocalDateTime.now()
         val today = now.toLocalDate()
         if (now.hour < HwStore.hour || HwStore.lastNotified == today.toString()) return Result.success()

@@ -48,6 +48,9 @@ object HwStore {
     var hour: Int
         get() = p.getInt("hour", 18)
         set(v) = p.edit().putInt("hour", v.coerceIn(0, 23)).apply()
+    var remindOn: Boolean
+        get() = p.getBoolean("on", true)
+        set(v) = p.edit().putBoolean("on", v).apply()
     var lastNotified: String
         get() = p.getString("last", "") ?: ""
         set(v) = p.edit().putString("last", v).apply()
