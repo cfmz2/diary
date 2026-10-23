@@ -111,7 +111,7 @@ fun DiagCard(modifier: Modifier = Modifier) {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 Text(
                     text, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                    color = cs.onSurfaceVariant, maxLines = 40
+                    color = cs.onSurfaceVariant, maxLines = 150
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

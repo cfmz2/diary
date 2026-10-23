@@ -25,31 +25,43 @@ object Session {
     @Volatile var yearId = 0L
     @Volatile var ready = false
     val seen = CopyOnWriteArrayList<String>()
+    @Volatile private var appCtx: Context? = null
 
     private fun p(c: Context) = c.applicationContext.getSharedPreferences("session", Context.MODE_PRIVATE)
 
     fun load(c: Context): Boolean {
+        appCtx = c.applicationContext
         val s = p(c)
         at = s.getString("at", "") ?: ""
         cookie = s.getString("cookie", "") ?: ""
-        studentId = s.getLong("sid", 0)
-        yearId = s.getLong("yid", 0)
+        if (s.getInt("ver", 0) == 2) {
+            studentId = s.getLong("sid", 0)
+            yearId = s.getLong("yid", 0)
+        } else { studentId = 0; yearId = 0 }
         return at.isNotEmpty()
     }
 
+    fun idsFromSeen(key: String): List<Long> {
+        val re = Regex("[?&]$key=(\\d+)")
+        val diary = seen.filter { it.contains("/student/diary") }
+        return (diary + seen).mapNotNull { re.find(it)?.groupValues?.get(1)?.toLongOrNull() }
+            .filter { it > 0 }.distinct()
+    }
+
+    fun persistIds() {
+        val c = appCtx ?: return
+        p(c).edit().putLong("sid", studentId).putLong("yid", yearId).putInt("ver", 2).apply()
+    }
+
     fun scanSeen() {
-        val sid = Regex("studentId=(\\d+)")
-        val yid = Regex("yearId=(\\d+)")
-        for (u in seen) {
-            if (studentId == 0L) sid.find(u)?.let { studentId = it.groupValues[1].toLongOrNull() ?: 0L }
-            if (yearId == 0L) yid.find(u)?.let { yearId = it.groupValues[1].toLongOrNull() ?: 0L }
-        }
+        if (studentId == 0L) idsFromSeen("studentId").firstOrNull()?.let { studentId = it }
+        if (yearId == 0L) idsFromSeen("yearId").firstOrNull()?.let { yearId = it }
     }
 
     fun save(c: Context) {
         scanSeen()
         p(c).edit().putString("at", at).putString("cookie", cookie)
-            .putLong("sid", studentId).putLong("yid", yearId).apply()
+            .putLong("sid", studentId).putLong("yid", yearId).putInt("ver", 2).apply()
     }
 
     fun clear(c: Context) {
@@ -67,6 +79,8 @@ data class Lesson(
 object Api {
     var lastUrl by mutableStateOf("")
     var lastBody by mutableStateOf("")
+    val log = CopyOnWriteArrayList<String>()
+    private fun logLine(x: String) { log.add(x); while (log.size > 60) log.removeAt(0) }
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -187,14 +201,62 @@ object Api {
         )
     }
 
-    fun week(start: LocalDate): List<Lesson> {
-        val end = start.plusDays(6)
-        val body = get(
-            "/webapi/student/diary?studentId=${Session.studentId}&weekEnd=$end&weekStart=$start" +
-                "&withLaAssigns=true&withPastMandatory=true&yearId=${Session.yearId}")
+    private fun diaryUrl(s: Long, y: Long, start: LocalDate) =
+        "/webapi/student/diary?studentId=$s&weekEnd=${start.plusDays(6)}&weekStart=$start" +
+            "&withLaAssigns=true&withPastMandatory=true&yearId=$y"
+
+    private fun lessonsOf(body: String): Pair<Int, List<Lesson>> {
+        val parsed = parse(body)
         val out = mutableListOf<Lesson>()
-        collect(parse(body), null, out)
-        return out.distinctBy { "${it.id}|${it.date}|${it.number}|${it.subject}" }
+        collect(parsed, null, out)
+        val days = (parsed as? JSONObject)?.optJSONArray("weekDays")?.length() ?: 0
+        val ls = out.distinctBy { "${it.id}|${it.date}|${it.number}|${it.subject}" }
             .sortedWith(compareBy({ it.date }, { it.number }))
+        return days to ls
+    }
+
+    fun week(start: LocalDate): List<Lesson> =
+        lessonsOf(get(diaryUrl(Session.studentId, Session.yearId, start))).second
+
+    /** Перебирает возможные studentId/yearId и недели, пока не найдутся уроки. */
+    fun probe(ws: LocalDate): Pair<LocalDate, List<Lesson>>? {
+        val init = tryGet("/webapi/student/diary/init")
+        logLine("init: " + (init?.toString() ?: "null").take(400))
+        val years = tryGet("/webapi/years/current")
+        logLine("years/current: " + (years?.toString() ?: "null").take(300))
+        val ctx = tryGet("/webapi/context")
+        logLine("context: " + (ctx?.toString() ?: "null").take(400))
+
+        val sids = linkedSetOf<Long>()
+        sids += Session.studentId
+        sids += Session.idsFromSeen("studentId")
+        sids += findLong(init, "currentStudentId", "studentId")
+        sids += findLong(ctx, "currentStudentId", "studentId")
+        val yids = linkedSetOf<Long>()
+        yids += Session.yearId
+        yids += Session.idsFromSeen("yearId")
+        yids += findLong(init, "yearId", "currentYearId")
+        yids += findLong(years, "id", "yearId")
+        yids += findLong(ctx, "schoolYearId", "yearId", "currentYearId")
+        sids.remove(0L); yids.remove(0L)
+        logLine("candidates: students=$sids years=$yids")
+
+        var n = 0
+        for (s in sids) for (y in yids) {
+            if (n++ >= 8) return null
+            for (k in 0..3) {
+                val w = ws.minusWeeks(k.toLong())
+                val r = try { lessonsOf(get(diaryUrl(s, y, w))) }
+                catch (e: AuthException) { throw e }
+                catch (e: Exception) { logLine("probe s=$s y=$y w=$w error=${e.message}"); continue }
+                logLine("probe s=$s y=$y w=$w days=${r.first} lessons=${r.second.size}")
+                if (r.second.isNotEmpty()) {
+                    Session.studentId = s; Session.yearId = y; Session.ready = true
+                    Session.persistIds()
+                    return w to r.second
+                }
+            }
+        }
+        return null
     }
 }

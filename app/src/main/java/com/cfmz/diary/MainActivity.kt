@@ -88,6 +88,7 @@ fun LoginScreen(onDone: () -> Unit) {
     val done = remember { AtomicBoolean(false) }
     var web by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var finishing by remember { mutableStateOf(false) }
     BackHandler {
         val w = web
         if (w != null && w.canGoBack()) w.goBack() else act?.finish()
@@ -112,6 +113,14 @@ fun LoginScreen(onDone: () -> Unit) {
         Box(Modifier.fillMaxWidth().height(3.dp)) {
             if (loading) LinearProgressIndicator(Modifier.fillMaxSize(), color = cs.primary, trackColor = Color.Transparent)
         }
+        if (finishing) Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = cs.primary)
+            Spacer(Modifier.width(10.dp))
+            Text("Настраиваем дневник…", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+        }
         AndroidView(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)),
@@ -133,10 +142,22 @@ fun LoginScreen(onDone: () -> Unit) {
                                     .firstOrNull { it.key.equals("at", true) }?.value
                                 if (!at.isNullOrBlank() && done.compareAndSet(false, true)) {
                                     Session.at = at
-                                    v.postDelayed({
-                                        Session.cookie = CookieManager.getInstance().getCookie(BASE) ?: Session.cookie
-                                        onDone()
-                                    }, 1500)
+                                    v.post {
+                                        finishing = true
+                                        v.loadUrl(BASE + "/angular/school/studentdiary/")
+                                    }
+                                    var tries = 0
+                                    val finish = object : Runnable {
+                                        override fun run() {
+                                            tries++
+                                            val got = Session.seen.any { it.contains("/webapi/student/diary?") }
+                                            if (got || tries >= 14) {
+                                                Session.cookie = CookieManager.getInstance().getCookie(BASE) ?: Session.cookie
+                                                onDone()
+                                            } else v.postDelayed(this, 500)
+                                        }
+                                    }
+                                    v.postDelayed(finish, 1500)
                                 }
                             }
                             return null

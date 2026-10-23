@@ -128,7 +128,6 @@ object DiaryModel {
                 val first = !searched
                 var res = fetch(ws)
                 searched = true
-                var jumped = false
                 if (first && res.isEmpty()) {
                     for (i in 1..8) {
                         val s = ws.minusWeeks(i.toLong())
@@ -136,11 +135,18 @@ object DiaryModel {
                         catch (e: CancellationException) { throw e }
                         catch (e: AuthException) { throw e }
                         catch (e: Exception) { emptyList<Lesson>() }
-                        if (r.isNotEmpty()) { start = s; res = r; jumped = true; break }
+                        if (r.isNotEmpty()) { start = s; res = r; break }
                     }
                 }
+                if (first && res.isEmpty()) {
+                    val p = try { withContext(Dispatchers.IO) { Api.probe(ws) } }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: AuthException) { throw e }
+                    catch (e: Exception) { null }
+                    if (p != null) { cache.clear(); start = p.first; res = p.second; cache[start] = res }
+                }
                 if (my != gen) return@launch
-                if (jumped) {
+                if (start != ws) {
                     val today = LocalDate.now()
                     weekStart = start
                     selected = res.map { it.date }.filter { !it.isAfter(today) }.maxOrNull() ?: res.first().date
@@ -161,8 +167,13 @@ object DiaryModel {
 
     fun diag(): String = buildString {
         appendLine("studentId=${Session.studentId} yearId=${Session.yearId}")
-        appendLine("week=$weekStart lessons=${lessons.size} seenUrls=${Session.seen.size}")
+        appendLine("week=$weekStart lessons=${lessons.size}")
+        appendLine("-- probe log")
+        Api.log.forEach { appendLine(it) }
+        appendLine("-- seen urls (${Session.seen.size})")
+        Session.seen.take(30).forEach { appendLine(it.removePrefix(BASE).take(150)) }
+        appendLine("-- last request")
         appendLine("GET ${Api.lastUrl}")
-        append(Api.lastBody.take(3000))
+        append(Api.lastBody.take(1500))
     }
 }
